@@ -14,13 +14,14 @@ VTok reduces video token complexity from O(T × S) to O(T + S) by decoupling spa
 - `MotionEncoder` — computes per-frame residual `F(x_t) - F(x_key)`, globally pools, and projects via a learned 2-layer MLP (`g_φ` in the paper)
 - Configurable temporal stride (default: 6 frames per motion token) and key frame selection
 
-**Unified framework (in progress):**
+**Unified framework (complete):**
 
-- `VTokFramework` — understanding and generation branches within a shared autoregressive MLLM (LLaVA-Next / LLaMA-3-8B)
-- Visual projection head (`φ_vis`) mapping tokeniser output to MLLM embedding space
+- VTokFramework — understanding and generation branches within a shared autoregressive MLLM
+- Understanding branch: video + instruction prompt -> MLLM -> caption/answer.
+- Combined training objective : L = L_under + lambda_visLM · L_visLM + lambda_dec · L_dec
+- Visual projection head (φ_vis) mapping tokeniser output to MLLM embedding space
 - HunyuanVideo diffusion transformer + VAE decoder (frozen)
-- Training loop with the combined objective from equation (12): `L = L_under + λ_visLM · L_visLM + λ_dec · L_dec`
-
+- EMA with apply/restore for evaluation
 ## Structure
 
 ```
@@ -35,7 +36,9 @@ vtok/
 ├── framework.py               # Unified understanding + generation model
 ├── train.py                   # Training loop
 └── data/
+    └── __init__.py
     └── dataset.py             # Video-caption dataset
+└── cli.py                     # Entry point for training.
 ```
 
 ## Installation
@@ -48,6 +51,26 @@ For CLIP backbone support:
 ```bash
 pip install transformers[torch]
 ```
+
+## Data format
+
+Organise your video-caption data as:
+
+```
+data_root/
+├── sample_000/
+│   ├── frames/
+│   │   ├── frame_0000.jpg
+│   │   ├── frame_0001.jpg
+│   │   └── ...
+│   └── caption.txt
+├── sample_001/
+│   ├── frames/
+│   │   └── ...
+│   └── caption.txt
+└── ...
+```
+
 
 ## Quick start
 
@@ -76,6 +99,20 @@ tokens = tokeniser(video)
 # tokens.shape: (1, 20, 512)
 ```
 
+### Full training
+After running `pip install -e .`
+You can run
+```
+# YAML config
+vtok-train --data_root ./data --config configs/clip_default.yaml
+
+# CLI
+vtok-train --data_root ./data --backbone clip --token_dim 1024 --epochs 10
+
+# YAML + CLI overrides
+vtok-train --data_root ./data --config configs/clip_default.yaml --lr 2e-5 --batch_size 8
+```
+
 ## Design decisions
 
 **Backbone choice.** The paper uses CLIP-L/336px as the shared feature extractor `F` and key frame encoder `E_key` (they are the same model with the same weights — see Section 3.2). We additionally support VGG19 for lighter-weight experimentation. The tokenisation paradigm is backbone-agnostic; the SpatialEncoder and MotionEncoder consume `(B, C_feat, H', W')` feature maps regardless of source.
@@ -87,8 +124,24 @@ tokens = tokeniser(video)
 ## Differences from the paper
 
 - We support VGG19 as an alternative backbone (paper uses CLIP-L exclusively).
-- The unified framework and training loop are work-in-progress.
+- Wan 2.2 adapter integration not implemented.
 - We do not yet implement the TV-Align evaluation benchmark.
+
+## Paper hyperparameters
+
+For reproducing the paper's config:
+
+- MLLM: LLaVA-Next with LLaMA-3-8B
+- Visual encoder: CLIP-L/336px (frozen)
+- Video decoder: HunyuanVideo-13B DiT (frozen)
+- Optimiser: AdamW, lr=1e-5
+- Batch size: 16
+- EMA decay: 0.999
+- lambda_visLM = lambda_dec = 1.0
+- Training data: ~5M video-caption pairs
+- Spatial tokens: 4×4 grid (16 tokens per key frame)
+- Temporal stride: 6 frames per motion token
+
 
 ## Citation
 
